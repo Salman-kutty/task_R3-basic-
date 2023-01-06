@@ -111,7 +111,7 @@ const allDataFromDB = async (req, res) => {
                 }
             }
         }
-        data = await employee.findAll({ where: whereCondition });
+        data = await employee.findAndCountAll({ where: whereCondition });
         ResponseData.response = Object.keys(data).length !== 0 ? data : {};
         res.status(200).json(ResponseData);
     } catch (err) {
@@ -355,8 +355,9 @@ const filterKeyValues = async (body) => {
     try {
         let key = "";
         let keyValues = []
-        if (Object.keys(body).length >= 3 && body.id && body.name && body.age) {
-            key += `*#id:${body.id}*#name:*${body.name}*#age:${body.age}#*`
+        if (Object.keys(body).length === 3 && body.id && body.name && body.age) {
+            console.log("Three data")
+            key += `*#id:${body.id}#name:*${body.name}*#age:${body.age}#*`
         } else {
             if (body.id) {
                 key += `*#id:${body.id}*#`;
@@ -405,10 +406,11 @@ const filterData = async (req, res) => {
                 }
             }
             let filterDataArr = await filterKeyValues(req.body);
+            const countValue = (await redisClient.keys('*')).length;
             console.log("Fill----> ", filterDataArr)
             if (filterDataArr.length > 0) {
-                console.log("Data from Cache...")
-                data = filterDataArr;
+                console.log("Data from Cache...", countValue)
+                data = { totalCount: countValue, rows: filterDataArr }
             } else {
                 console.log("Data from DB...")
                 if (req.body.id) {
