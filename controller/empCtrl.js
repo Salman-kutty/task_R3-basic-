@@ -357,7 +357,7 @@ const filterKeyValues = async (body) => {
         let keyValues = []
         if (Object.keys(body).length === 3 && body.id && body.name && body.age) {
             console.log("Three data")
-            key += `*#id:${body.id}#name:*${body.name}*#age:${body.age}#*`
+            key += `*#id:${body.id}*#name:*${body.name}*#age:${body.age}#*`
         } else {
             if (body.id) {
                 key += `*#id:${body.id}*#`;
@@ -387,6 +387,7 @@ const filterKeyValues = async (body) => {
 const filterData = async (req, res) => {
     try {
         let data;
+        let key;
         let whereCondition = {};
         let bodyKeys = ["id", "name", "age"];
         let properties = Object.keys(req.body);
@@ -427,6 +428,16 @@ const filterData = async (req, res) => {
                     }
                 }
                 data = await employee.findAll({ where: whereCondition });
+                if (Array.isArray(data)) {
+                    for (let single of data) {
+                        key = `#id:${single.id}#name:${single.name}#age:${single.age}#`
+                        await redisClient.set(key, JSON.stringify(single));
+                    }
+                } else {
+                    key = `#id:${data.id}#name:${data.name}#age:${data.age}#`
+                    await redisClient.set(key, JSON.stringify(data));
+                }
+
             }
 
         }
