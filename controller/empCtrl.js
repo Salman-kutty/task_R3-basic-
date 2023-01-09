@@ -1,5 +1,6 @@
 const employee = require("../model/employee");
 const { Op } = require('sequelize');
+const e = require("express");
 const redisClient = require('redis').createClient(6379, 'localhost');
 redisClient.connect().then(() => console.log("Redis is connected..."))
     .catch((err) => console.log("Error while connecting redis ::", err))
@@ -273,24 +274,20 @@ const typeValidation = (body) => {
             errors.push("Invalid type of data");
         }
     }
-    if (body.name && body.age) {
-        if (typeof (body.name) !== 'string' && typeof (body.age) !== 'number') {
+    if (body.name) {
+        if (typeof (body.name) !== 'string') {
             errors.push("Invalid type of data")
         }
-    } else {
-        if (body.name) {
-            if (typeof (body.name) !== 'string') {
-                errors.push("Invalid type of data")
-            }
-        } else if (body.age) {
-            if (typeof (body.age) !== 'number') {
-                errors.push("Invalid type of data")
-            }
+    }
+    if (body.age) {
+        if (typeof (body.age) !== 'number') {
+            errors.push("Invalid type of data")
         }
     }
     console.log(errors)
     return errors;
 }
+
 const paginationData = async (req, res) => {
     try {
         let data;
@@ -354,44 +351,45 @@ const validation = (obj) => {
 const filterKeyValues = async (body) => {
     try {
         let key = "";
+        let whereCondition = {};
         let keyValues = []
         if (Object.keys(body).length === 3 && body.id && body.name && body.age) {
             console.log("Three data")
             key += `*#id:${body.id}*#name:*${body.name}*#age:${body.age}#*`
+            whereCondition = { id: { [Op.substring]: body.id }, name: { [Op.substring]: body.name }, age: { [Op.substring]: body.age } }
         } else {
             if (body.id) {
                 key += `*#id:${body.id}*#`;
+                whereCondition["id"] = { [Op.substring]: body.id }
             }
             if (body.name) {
                 key += `*name:*${body.name}*#`;
+                whereCondition["name"] = { [Op.substring]: body.name }
             }
             if (body.age) {
                 key += `*age:${body.age}#*`;
+                whereCondition["age"] = { [Op.substring]: body.age }
             }
 
         }
-
-
         const arr = await redisClient.keys(key);
         console.log(key)
         for (let data of arr) {
             keyValues.push(JSON.parse(await redisClient.get(data)));
         }
 
-        return keyValues
+        return { keyValues, whereCondition }
     } catch (err) {
-        console.log("Error in filterKey Function --> ", err)
+        console.log("Error in filterKeyValues Function --> ", err)
     }
 }
 
 const filterData = async (req, res) => {
     try {
         let data;
-        let key;
-        let whereCondition = {};
+        let filterDataArr;
         let bodyKeys = ["id", "name", "age"];
         let properties = Object.keys(req.body);
-        console.log("Properties --> ", properties)
         if (Object.keys(req.body).length > 0) {
             let typeErrors = typeValidation(req.body);
             if (typeErrors.length > 0) {
@@ -406,40 +404,83 @@ const filterData = async (req, res) => {
                     return
                 }
             }
-            let filterDataArr = await filterKeyValues(req.body);
+            filterDataArr = await filterKeyValues(req.body);
             const countValue = (await redisClient.keys('*')).length;
-            console.log("Fill----> ", filterDataArr)
-            if (filterDataArr.length > 0) {
-                console.log("Data from Cache...", countValue)
-                data = { totalCount: countValue, rows: filterDataArr }
+            if (filterDataArr.keyValues.length > 0) {
+                console.log("Data from Cache...")
+                data = { totalCount: countValue, rows: filterDataArr.keyValues }
             } else {
                 console.log("Data from DB...")
-                if (req.body.id) {
-                    whereCondition = { id: { [Op.substring]: req.body.id } }
-                } else {
-                    if (req.body.name && req.body.age) {
-                        whereCondition = { name: { [Op.substring]: req.body.name }, age: { [Op.substring]: req.body.age } }
-                    } else {
-                        if (req.body.name) {
-                            whereCondition = { name: { [Op.substring]: req.body.name } }
-                        } else if (req.body.age) {
-                            whereCondition = { age: { [Op.substring]: req.body.age } }
-                        }
-                    }
+                data = await employee.findAll({ where: filterDataArr.whereCondition });
+                creatingKey(data);
+            }
+        }
+        ResponseData.response = Object.keys(data).length !== 0 ? data : {};
+        res.status(200).json(ResponseData);
+    } catch (err) {
+        ErrorData.message = err.message;
+        res.status(400).json(ErrorData)
+    }
+}
+const paginationValidation = (body) => {
+    try {
+        let keys = ["id", "name", "age", "pageSize", "pageNumber"];
+        let bodyKeys = Object.keys(body);
+        let errorsInBody = [];
+        const typeError = typeValidation(body)
+        console.log("typeError", typeError)
+        if (typeError.length > 0) {
+            errorsInBody.push("Error")
+        } else {
+            bodyKeys.map((data) => {
+                if (!keys.includes(data)) {
+                    errorsInBody.push("Error")
                 }
-                data = await employee.findAll({ where: whereCondition });
-                if (Array.isArray(data)) {
-                    for (let single of data) {
-                        key = `#id:${single.id}#name:${single.name}#age:${single.age}#`
-                        await redisClient.set(key, JSON.stringify(single));
-                    }
-                } else {
-                    key = `#id:${data.id}#name:${data.name}#age:${data.age}#`
-                    await redisClient.set(key, JSON.stringify(data));
-                }
+            })
+        }
+        console.log(errorsInBody)
+        return errorsInBody;
 
+    } catch (err) {
+        console.log("Error in paginationValidation --> ", err)
+    }
+}
+const paginationRedis = async (req, res) => {
+    try {
+        console.log(req.body)
+        let jsonData = [];
+        let data;
+        if (Object.keys(req.body).length >= 2 && req.body.pageNumber && req.body.pageSize &&
+            typeof (req.body.pageNumber) === "number" && typeof (req.body.pageSize) === "number") {
+            let validationErrors = paginationValidation(req.body);
+            let keysObj = await filterKeyValues(req.body);
+            console.log("KeyObj..", keysObj.keyValues)
+            // let totalCount = keysObj.length;
+            if (validationErrors.length > 0) {
+                ErrorData.message = "Validation error in  present ... ";
+                res.status(400).json(ErrorData);
+                return
+            } else {
+                if (keysObj.keyValues.length > 0) {
+                    console.log("Take From Cache ....")
+                    let current = (req.body.pageNumber - 1) * req.body.pageSize;
+                    console.log("Inside loop")
+                    for (let i = current; i < req.body.pageNumber * req.body.pageSize; i++) {
+                        console.log(keysObj.keyValues[i])
+                        jsonData.push(keysObj.keyValues[i]);
+                    }
+                    data = jsonData
+                } else {
+                    console.log("Take from Db")
+                    data = await employee.findAll({ where: keysObj.whereCondition, offset: req.body.pageNumber, limit: req.body.pageSize })
+                }
             }
 
+
+        } else {
+            ErrorData.message = "Incorrect Request body data ... ";
+            res.status(400).json(ErrorData);
+            return
         }
 
         ResponseData.response = Object.keys(data).length !== 0 ? data : {};
@@ -472,5 +513,6 @@ module.exports = {
     deleteData,
     paginationData,
     resettingRedis,
-    filterData
+    filterData,
+    paginationRedis
 }

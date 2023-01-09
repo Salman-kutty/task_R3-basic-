@@ -8,5 +8,6 @@ router.put('/update', empCtrl.updateData);
 router.delete('/delete', empCtrl.deleteData);
 router.get('/pagination', empCtrl.paginationData);
 router.get('/filteration', empCtrl.filterData);
+router.get('/filterationRedis', empCtrl.paginationRedis);
 
 module.exports = router;
